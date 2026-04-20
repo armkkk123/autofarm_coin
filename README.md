@@ -1,0 +1,1 @@
+# autofarm_coin
