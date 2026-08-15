@@ -480,8 +480,8 @@ local sg = create("ScreenGui", {
 
 local win = create("Frame", {
     Name = "Main",
-    Size = UDim2.new(0, 320, 0, 428),
-    Position = UDim2.new(0, 20, 0.5, -214),
+    Size = UDim2.new(0, 320, 0, 394),
+    Position = UDim2.new(0, 20, 0.5, -197),
     BackgroundColor3 = Color3.fromRGB(16, 16, 20),
     BorderSizePixel = 0,
     ClipsDescendants = true,
@@ -516,7 +516,7 @@ create("TextLabel", {
     Parent = top,
 })
 
-local WIN_OPEN = UDim2.new(0, 320, 0, 428)
+local WIN_OPEN = UDim2.new(0, 320, 0, 394)
 local WIN_MIN = UDim2.new(0, 320, 0, 36)
 local guiMinimized = false
 local minBtn = create("TextButton", {
@@ -611,27 +611,11 @@ local function queueScriptOnTeleport()
     local qot = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
     if not qot then return end
     
-    pcall(function()
-        if typeof(isfolder) == "function" and not isfolder("RuajadHub") then
-            makefolder("RuajadHub")
-        end
-    end)
-    
     local loader = [[
         repeat task.wait() until game:IsLoaded()
         task.wait(2)
         pcall(function()
-            if typeof(isfile) == "function" and isfile("RuajadHub/storage_trade.lua") then
-                loadstring(readfile("RuajadHub/storage_trade.lua"))()
-            elseif typeof(isfile) == "function" and isfile("storage_trade.lua") then
-                loadstring(readfile("storage_trade.lua"))()
-            elseif typeof(isfile) == "function" and isfile("RuajadHub/StorageTrade_Loader.lua") then
-                loadstring(readfile("RuajadHub/StorageTrade_Loader.lua"))()
-            elseif typeof(isfile) == "function" and isfile("Dragon Adventures/Autofarmcoin/src/storage_trade.lua") then
-                loadstring(readfile("Dragon Adventures/Autofarmcoin/src/storage_trade.lua"))()
-            elseif typeof(getgenv) == "function" and type(getgenv().RuajadStorageTradeScript) == "string" then
-                loadstring(getgenv().RuajadStorageTradeScript)()
-            end
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/armkkk123/autofarm_coin/refs/heads/main/storage_trade.lua"))()
         end)
     ]]
     pcall(function()
@@ -992,149 +976,6 @@ local manualHopBtn = create("TextButton", {
 create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = manualHopBtn})
 manualHopBtn.MouseButton1Click:Connect(function()
     hopToSmallServer("Manual hop button")
-end)
-
--- ตรวจสอบว่าไอดีนี้เคยตั้งค่า Setup ไว้ใน autoexec แล้วหรือไม่
-local isAlreadySetup = false
-pcall(function()
-    local myName = LP.Name:lower()
-    local autoexecPaths = { "autoexec/", "auto-exec/", "AutoExec/", "Autoexec/" }
-    for _, f in ipairs(autoexecPaths) do
-        if typeof(isfile) == "function" and isfile(f .. "ruajad_storage_autoload.lua") then
-            local content = readfile(f .. "ruajad_storage_autoload.lua")
-            if string.find(content:lower(), string.format('["%s"]', myName), 1, true) then
-                isAlreadySetup = true
-                break
-            end
-        end
-    end
-end)
-
--- กรอบทึบปิดกั้นการใช้งานฟังก์ชันทั้งหมด จนกว่าจะกด Setup
-local lockOverlay = create("TextButton", {
-    Size = UDim2.new(1, -16, 0, 314),
-    Position = UDim2.new(0, 8, 0, 70),
-    BackgroundColor3 = Color3.fromRGB(10, 10, 14),
-    BackgroundTransparency = 0.35,
-    BorderSizePixel = 0,
-    Text = "",
-    AutoButtonColor = false,
-    Active = true,
-    Visible = not isAlreadySetup,
-    ZIndex = 8,
-    Parent = win,
-})
-create("UICorner", {CornerRadius = UDim.new(0, 8), Parent = lockOverlay})
-
-create("TextLabel", {
-    Size = UDim2.new(1, -20, 0, 36),
-    Position = UDim2.new(0, 10, 0.5, -18),
-    BackgroundTransparency = 1,
-    Font = Enum.Font.GothamBold,
-    TextSize = 12,
-    TextColor3 = Color3.fromRGB(220, 220, 230),
-    Text = "LOCKED: Click Setup below to activate",
-    ZIndex = 9,
-    Parent = lockOverlay,
-})
-
--- ปุ่มเดียวจบ: เซ็ต AutoExecute เฉพาะชื่อไอดีสำรองจอนี้
-local autoExecBtn = create("TextButton", {
-    Size = UDim2.new(1, -24, 0, 28),
-    Position = UDim2.new(0, 12, 0, 388),
-    BackgroundColor3 = isAlreadySetup and Color3.fromRGB(18, 48, 28) or Color3.fromRGB(26, 88, 44),
-    BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold,
-    TextSize = 11,
-    TextColor3 = Color3.fromRGB(130, 255, 160),
-    Text = isAlreadySetup and "Auto-Execute Linked (Active)" or "Setup Auto-Execute (Click to Unlock)",
-    AutoButtonColor = true,
-    ZIndex = 10,
-    Parent = win,
-})
-create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = autoExecBtn})
-create("UIStroke", {Color = Color3.fromRGB(45, 120, 65), Thickness = 1, Parent = autoExecBtn})
-
-autoExecBtn.MouseButton1Click:Connect(function()
-    autoExecBtn.Text = "Setting up..."
-    task.spawn(function()
-        local myName = LP.Name
-        if typeof(isfolder) == "function" and not isfolder("RuajadHub") then
-            pcall(makefolder, "RuajadHub")
-        end
-        
-        -- ดึงรายชื่อไอดีที่เคยบันทึกไว้ใน autoexec เดิม (ถ้ามี)
-        local knownAccounts = { [myName:lower()] = true }
-        local autoexecPaths = { "autoexec/", "auto-exec/", "AutoExec/", "Autoexec/" }
-        local targetFolder = "autoexec/"
-        
-        for _, f in ipairs(autoexecPaths) do
-            if typeof(isfolder) == "function" and isfolder(f) then
-                targetFolder = f
-                local autoFilePath = f .. "ruajad_storage_autoload.lua"
-                if typeof(isfile) == "function" and isfile(autoFilePath) then
-                    local content = readfile(autoFilePath)
-                    for acc in string.gmatch(content, '%["(.-)"%]%s*=%s*true') do
-                        knownAccounts[acc:lower()] = true
-                    end
-                end
-                break
-            end
-        end
-
-        -- ประกอบโค้ดสำหรับไฟล์ใน autoexec ที่เช็คชื่อผู้เล่น
-        local accTableStr = "{\n"
-        for acc in pairs(knownAccounts) do
-            accTableStr = accTableStr .. string.format('    [%q] = true,\n', acc)
-        end
-        accTableStr = accTableStr .. "}"
-
-        local loaderScript = string.format([[-- [Ruajad Hub] Storage Trade Auto-Loader (Backup accounts only)
-repeat task.wait() until game:IsLoaded()
-local LP = game:GetService("Players").LocalPlayer
-if not LP then return end
-
-local BACKUP_ACCOUNTS = %s
-
-if BACKUP_ACCOUNTS[LP.Name:lower()] then
-    task.wait(2)
-    pcall(function()
-        if typeof(isfile) == "function" and isfile("RuajadHub/storage_trade.lua") then
-            loadstring(readfile("RuajadHub/storage_trade.lua"))()
-        elseif typeof(isfile) == "function" and isfile("storage_trade.lua") then
-            loadstring(readfile("storage_trade.lua"))()
-        end
-    end)
-end
-]], accTableStr)
-
-        if typeof(isfolder) == "function" and not isfolder(targetFolder:gsub("/$", "")) then
-            pcall(makefolder, targetFolder:gsub("/$", ""))
-        end
-
-        local savedAuto = false
-        pcall(function()
-            if typeof(writefile) == "function" then
-                writefile(targetFolder .. "ruajad_storage_autoload.lua", loaderScript)
-                savedAuto = true
-            end
-        end)
-
-        queueScriptOnTeleport()
-
-        if savedAuto then
-            isAlreadySetup = true
-            lockOverlay.Visible = false
-            autoExecBtn.Text = "Setup Complete (Active)"
-            autoExecBtn.BackgroundColor3 = Color3.fromRGB(18, 48, 28)
-            setStatus("Ready · Linked @" .. myName)
-        else
-            autoExecBtn.Text = "Failed to save autoexec"
-            setStatus("writefile error")
-            task.wait(2)
-            autoExecBtn.Text = "Setup Auto-Execute (Click to Unlock)"
-        end
-    end)
 end)
 
 local applySlotId
@@ -1575,6 +1416,10 @@ task.spawn(function()
             end
         end
     end
+end)
+
+pcall(function()
+    queueScriptOnTeleport()
 end)
 
 print("[Ruajad] Storage Trade loaded — BACKUP  slot #" .. tostring(CONFIG.SlotId))
