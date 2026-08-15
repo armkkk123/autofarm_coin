@@ -2,7 +2,7 @@
 ================================================================================
   DRAGON ADVENTURES  |  RUAJAD HUB - Storage Trade (Backup Account)
 ================================================================================
-  รันไฟล์นี้บนรหัสสำรอง — ไม่ใช่ main_src.lua
+
 
   หน้าที่
   --------
@@ -25,6 +25,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 local CoreGui = game:GetService("CoreGui")
 
 local LP = Players.LocalPlayer
@@ -40,6 +41,8 @@ local CONFIG = {
     HideTerrain = true,
     LowRam = false,
     AntiAfk = true,
+    AutoHopCrowded = true, -- ย้ายเซิร์ฟอัตโนมัติเมื่อคนในเซิร์ฟ >= 10 คน (ป้องกันเซิร์ฟเต็มจนตัวหลักเข้าไม่ได้)
+    CrowdedThreshold = 10, -- จำนวนผู้เล่นที่ถือว่าเซิร์ฟแน่น
 }
 
 local ACCENT = Color3.fromRGB(50, 150, 250)
@@ -123,6 +126,12 @@ local function applySaved(data)
     if data.AntiAfk ~= nil then
         CONFIG.AntiAfk = data.AntiAfk and true or false
     end
+    if data.AutoHopCrowded ~= nil then
+        CONFIG.AutoHopCrowded = data.AutoHopCrowded and true or false
+    end
+    if data.CrowdedThreshold ~= nil then
+        CONFIG.CrowdedThreshold = math.clamp(tonumber(data.CrowdedThreshold) or 10, 2, 12)
+    end
 end
 
 -- โหลด SlotId จาก getgenv / ไฟล์เก่า แล้วค่อยโหลดไฟล์แยกตามเลข
@@ -153,6 +162,8 @@ local function snapshotConfig()
         HideTerrain = CONFIG.HideTerrain,
         LowRam = CONFIG.LowRam,
         AntiAfk = CONFIG.AntiAfk,
+        AutoHopCrowded = CONFIG.AutoHopCrowded,
+        CrowdedThreshold = CONFIG.CrowdedThreshold,
     }
 end
 
@@ -469,8 +480,8 @@ local sg = create("ScreenGui", {
 
 local win = create("Frame", {
     Name = "Main",
-    Size = UDim2.new(0, 320, 0, 468),
-    Position = UDim2.new(0, 20, 0.5, -234),
+    Size = UDim2.new(0, 320, 0, 428),
+    Position = UDim2.new(0, 20, 0.5, -214),
     BackgroundColor3 = Color3.fromRGB(16, 16, 20),
     BorderSizePixel = 0,
     ClipsDescendants = true,
@@ -505,7 +516,7 @@ create("TextLabel", {
     Parent = top,
 })
 
-local WIN_OPEN = UDim2.new(0, 320, 0, 468)
+local WIN_OPEN = UDim2.new(0, 320, 0, 428)
 local WIN_MIN = UDim2.new(0, 320, 0, 36)
 local guiMinimized = false
 local minBtn = create("TextButton", {
@@ -593,9 +604,146 @@ do
     end)
 end
 
+-- ============================================================
+-- [2c] QUEUE ON TELEPORT & SMALL SERVER HOPPER
+-- ============================================================
+local function queueScriptOnTeleport()
+    local qot = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+    if not qot then return end
+    
+    pcall(function()
+        if typeof(isfolder) == "function" and not isfolder("RuajadHub") then
+            makefolder("RuajadHub")
+        end
+    end)
+    
+    local loader = [[
+        repeat task.wait() until game:IsLoaded()
+        task.wait(2)
+        pcall(function()
+            if typeof(isfile) == "function" and isfile("RuajadHub/storage_trade.lua") then
+                loadstring(readfile("RuajadHub/storage_trade.lua"))()
+            elseif typeof(isfile) == "function" and isfile("storage_trade.lua") then
+                loadstring(readfile("storage_trade.lua"))()
+            elseif typeof(isfile) == "function" and isfile("RuajadHub/StorageTrade_Loader.lua") then
+                loadstring(readfile("RuajadHub/StorageTrade_Loader.lua"))()
+            elseif typeof(isfile) == "function" and isfile("Dragon Adventures/Autofarmcoin/src/storage_trade.lua") then
+                loadstring(readfile("Dragon Adventures/Autofarmcoin/src/storage_trade.lua"))()
+            elseif typeof(getgenv) == "function" and type(getgenv().RuajadStorageTradeScript) == "string" then
+                loadstring(getgenv().RuajadStorageTradeScript)()
+            end
+        end)
+    ]]
+    pcall(function()
+        qot(loader)
+    end)
+end
+
+local isHopping = false
+local function collectJoinableServers(placeId, currentJobId, pickLowest)
+    local cursor = nil
+    local candidates = {}
+    local bestId = nil
+    local bestPlaying = math.huge
+
+    for page = 1, 10 do
+        local url = string.format(
+            "https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100%s",
+            tostring(placeId),
+            cursor and ("&cursor=" .. HttpService:UrlEncode(cursor)) or ""
+        )
+        local raw = nil
+        local ok, _ = pcall(function()
+            raw = game:HttpGet(url)
+        end)
+        if not ok or not raw or raw == "" then
+            break
+        end
+
+        local data = nil
+        pcall(function()
+            data = HttpService:JSONDecode(raw)
+        end)
+        if type(data) ~= "table" or type(data.data) ~= "table" then
+            break
+        end
+
+        for _, server in ipairs(data.data) do
+            if type(server) == "table" then
+                local sid = server.id
+                local playing = tonumber(server.playing)
+                local maxPlayers = tonumber(server.maxPlayers)
+                if type(sid) == "string"
+                    and sid ~= currentJobId
+                    and playing and maxPlayers
+                    and playing < maxPlayers
+                then
+                    if pickLowest then
+                        if playing < bestPlaying and playing >= 1 then
+                            bestPlaying = playing
+                            bestId = sid
+                        end
+                    else
+                        table.insert(candidates, sid)
+                    end
+                end
+            end
+        end
+
+        if pickLowest and bestId and bestPlaying <= 4 then
+            return bestId, bestPlaying
+        end
+
+        cursor = data.nextPageCursor
+        if not cursor then
+            break
+        end
+    end
+
+    if pickLowest and bestId then
+        return bestId, bestPlaying
+    end
+    if #candidates > 0 then
+        return candidates[math.random(1, #candidates)], nil
+    end
+    return nil, nil
+end
+
+local function hopToSmallServer(reason)
+    if isHopping then return end
+    isHopping = true
+    
+    setStatus("Hopping: " .. tostring(reason or "finding small server..."))
+    
+    task.spawn(function()
+        queueScriptOnTeleport()
+        local targetJobId, playing = collectJoinableServers(game.PlaceId, game.JobId, true)
+        if targetJobId then
+            setStatus("Teleporting (" .. tostring(playing) .. " players)...")
+            task.wait(0.5)
+            for _ = 1, 3 do
+                local ok = pcall(function()
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, targetJobId, LP)
+                end)
+                if ok then break end
+                task.wait(2)
+            end
+        else
+            setStatus("No small server found, rejoining...")
+            task.wait(0.5)
+            for _ = 1, 3 do
+                pcall(function() TeleportService:Teleport(game.PlaceId, LP) end)
+                task.wait(3)
+            end
+        end
+        task.wait(10)
+        isHopping = false
+    end)
+end
+
 local function makeToggle(y, label, value, onChange)
     local row = create("Frame", {
-        Size = UDim2.new(1, -24, 0, 26),
+        Size = UDim2.new(1, -24, 0, 24),
         Position = UDim2.new(0, 12, 0, y),
         BackgroundTransparency = 1,
         Parent = win,
@@ -604,34 +752,34 @@ local function makeToggle(y, label, value, onChange)
         Size = UDim2.new(1, -50, 1, 0),
         BackgroundTransparency = 1,
         Font = Enum.Font.Gotham,
-        TextSize = 12,
+        TextSize = 11,
         TextColor3 = Color3.fromRGB(210, 210, 215),
         TextXAlignment = Enum.TextXAlignment.Left,
         Text = label,
         Parent = row,
     })
     local sw = create("TextButton", {
-        Size = UDim2.new(0, 42, 0, 20),
-        Position = UDim2.new(1, -42, 0.5, -10),
+        Size = UDim2.new(0, 38, 0, 18),
+        Position = UDim2.new(1, -38, 0.5, -9),
         BackgroundColor3 = value and ACCENT or Color3.fromRGB(50, 50, 55),
         Text = "",
         BorderSizePixel = 0,
         Parent = row,
     })
-    create("UICorner", {CornerRadius = UDim.new(0, 10), Parent = sw})
+    create("UICorner", {CornerRadius = UDim.new(0, 9), Parent = sw})
     local knob = create("Frame", {
-        Size = UDim2.new(0, 16, 0, 16),
-        Position = value and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8),
+        Size = UDim2.new(0, 14, 0, 14),
+        Position = value and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7),
         BackgroundColor3 = Color3.fromRGB(255, 255, 255),
         BorderSizePixel = 0,
         Parent = sw,
     })
-    create("UICorner", {CornerRadius = UDim.new(0, 8), Parent = knob})
+    create("UICorner", {CornerRadius = UDim.new(0, 7), Parent = knob})
     local active = value
     local function set(state)
         active = state
         TweenService:Create(knob, TweenInfo.new(0.2), {
-            Position = state and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8),
+            Position = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7),
         }):Play()
         TweenService:Create(sw, TweenInfo.new(0.2), {
             BackgroundColor3 = state and ACCENT or Color3.fromRGB(50, 50, 55),
@@ -656,49 +804,59 @@ makeToggle(102, "Hide Map / Objects", CONFIG.HideTerrain, function(state)
     applyHideTerrain(state)
 end)
 
--- makeToggle(130, "Low RAM (3D off / low graphics)", CONFIG.LowRam, function(state)
---     CONFIG.LowRam = state
---     saveConfig()
---     applyLowRam(state)
--- end)
-
 makeToggle(130, "Anti-AFK", CONFIG.AntiAfk, function(state)
     CONFIG.AntiAfk = state
     saveConfig()
     applyAntiAfk(state)
 end)
 
-create("TextLabel", {
-    Size = UDim2.new(0.55, -12, 0, 14),
+makeToggle(158, "Auto-Hop Crowded (>=10)", CONFIG.AutoHopCrowded, function(state)
+    CONFIG.AutoHopCrowded = state
+    saveConfig()
+end)
+
+-- กรอบแยกสำหรับ Slot ID ชัดเจน ไม่ปนกับ Toggle
+local slotRow = create("Frame", {
+    Size = UDim2.new(1, -24, 0, 30),
     Position = UDim2.new(0, 12, 0, 190),
+    BackgroundColor3 = Color3.fromRGB(22, 22, 28),
+    BorderSizePixel = 0,
+    Parent = win,
+})
+create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = slotRow})
+create("UIStroke", {Color = Color3.fromRGB(45, 45, 55), Thickness = 1, Parent = slotRow})
+
+create("TextLabel", {
+    Size = UDim2.new(1, -70, 1, 0),
+    Position = UDim2.new(0, 10, 0, 0),
     BackgroundTransparency = 1,
-    Font = Enum.Font.Gotham,
+    Font = Enum.Font.GothamBold,
     TextSize = 11,
-    TextColor3 = Color3.fromRGB(140, 140, 150),
+    TextColor3 = Color3.fromRGB(180, 185, 200),
     TextXAlignment = Enum.TextXAlignment.Left,
     Text = "Slot ID (match main)",
-    Parent = win,
+    Parent = slotRow,
 })
 
 local slotBox = create("TextBox", {
-    Size = UDim2.new(0, 72, 0, 24),
-    Position = UDim2.new(1, -84, 0, 186),
-    BackgroundColor3 = Color3.fromRGB(24, 24, 30),
+    Size = UDim2.new(0, 52, 0, 20),
+    Position = UDim2.new(1, -58, 0.5, -10),
+    BackgroundColor3 = Color3.fromRGB(14, 14, 18),
     BorderSizePixel = 0,
     Font = Enum.Font.GothamBold,
-    TextSize = 14,
+    TextSize = 12,
     TextColor3 = Color3.fromRGB(255, 255, 255),
     Text = tostring(CONFIG.SlotId),
     ClearTextOnFocus = false,
     TextXAlignment = Enum.TextXAlignment.Center,
-    Parent = win,
+    Parent = slotRow,
 })
-create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = slotBox})
-create("UIStroke", {Color = Color3.fromRGB(45, 45, 55), Thickness = 1, Parent = slotBox})
+create("UICorner", {CornerRadius = UDim.new(0, 4), Parent = slotBox})
+create("UIStroke", {Color = Color3.fromRGB(55, 55, 70), Thickness = 1, Parent = slotBox})
 
 create("TextLabel", {
     Size = UDim2.new(1, -24, 0, 14),
-    Position = UDim2.new(0, 12, 0, 220),
+    Position = UDim2.new(0, 12, 0, 228),
     BackgroundTransparency = 1,
     Font = Enum.Font.Gotham,
     TextSize = 11,
@@ -709,8 +867,8 @@ create("TextLabel", {
 })
 
 local nameScroll = create("ScrollingFrame", {
-    Size = UDim2.new(1, -24, 0, 132),
-    Position = UDim2.new(0, 12, 0, 234),
+    Size = UDim2.new(1, -24, 0, 105),
+    Position = UDim2.new(0, 12, 0, 246),
     BackgroundColor3 = Color3.fromRGB(20, 20, 26),
     BorderSizePixel = 0,
     ScrollBarThickness = 4,
@@ -745,17 +903,17 @@ rebuildNameRows = function()
     end
     for i, name in ipairs(CONFIG.MainUsernames) do
         local row = create("Frame", {
-            Size = UDim2.new(1, -8, 0, 28),
+            Size = UDim2.new(1, -8, 0, 26),
             BackgroundTransparency = 1,
             LayoutOrder = i,
             Parent = nameScroll,
         })
         local box = create("TextBox", {
-            Size = UDim2.new(1, -32, 1, 0),
+            Size = UDim2.new(1, -30, 1, 0),
             BackgroundColor3 = Color3.fromRGB(24, 24, 30),
             BorderSizePixel = 0,
             Font = Enum.Font.Gotham,
-            TextSize = 12,
+            TextSize = 11,
             TextColor3 = Color3.fromRGB(255, 255, 255),
             PlaceholderColor3 = Color3.fromRGB(110, 110, 120),
             PlaceholderText = "farmer username",
@@ -774,12 +932,12 @@ rebuildNameRows = function()
             setStatus(n > 0 and ("Watching " .. n .. " main(s)") or "Add a main username")
         end)
         local del = create("TextButton", {
-            Size = UDim2.new(0, 26, 1, 0),
-            Position = UDim2.new(1, -26, 0, 0),
+            Size = UDim2.new(0, 24, 1, 0),
+            Position = UDim2.new(1, -24, 0, 0),
             BackgroundColor3 = Color3.fromRGB(40, 22, 24),
             BorderSizePixel = 0,
             Font = Enum.Font.GothamBold,
-            TextSize = 14,
+            TextSize = 13,
             TextColor3 = Color3.fromRGB(255, 130, 130),
             Text = "x",
             AutoButtonColor = true,
@@ -801,14 +959,14 @@ end
 rebuildNameRows()
 
 local addBtn = create("TextButton", {
-    Size = UDim2.new(1, -24, 0, 26),
-    Position = UDim2.new(0, 12, 0, 372),
+    Size = UDim2.new(0.48, -14, 0, 24),
+    Position = UDim2.new(0, 12, 0, 358),
     BackgroundColor3 = Color3.fromRGB(28, 40, 56),
     BorderSizePixel = 0,
     Font = Enum.Font.GothamBold,
-    TextSize = 12,
+    TextSize = 11,
     TextColor3 = Color3.fromRGB(160, 210, 255),
-    Text = "+ Add main username",
+    Text = "+ Add main",
     AutoButtonColor = true,
     Parent = win,
 })
@@ -819,19 +977,165 @@ addBtn.MouseButton1Click:Connect(function()
     rebuildNameRows()
 end)
 
-create("TextLabel", {
-    Size = UDim2.new(1, -24, 0, 40),
-    Position = UDim2.new(0, 12, 0, 404),
-    BackgroundTransparency = 1,
-    Font = Enum.Font.Gotham,
-    TextSize = 10,
-    TextColor3 = Color3.fromRGB(110, 115, 125),
-    TextXAlignment = Enum.TextXAlignment.Left,
-    TextYAlignment = Enum.TextYAlignment.Top,
-    TextWrapped = true,
-    Text = "Queue: only one trade at a time. Main Slot ID must match this window. Duplicate Slot ID = last writer wins.",
+local manualHopBtn = create("TextButton", {
+    Size = UDim2.new(0.52, -14, 0, 24),
+    Position = UDim2.new(0.48, 2, 0, 358),
+    BackgroundColor3 = Color3.fromRGB(30, 55, 80),
+    BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold,
+    TextSize = 11,
+    TextColor3 = Color3.fromRGB(140, 220, 255),
+    Text = "Hop Small Server",
+    AutoButtonColor = true,
     Parent = win,
 })
+create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = manualHopBtn})
+manualHopBtn.MouseButton1Click:Connect(function()
+    hopToSmallServer("Manual hop button")
+end)
+
+-- ตรวจสอบว่าไอดีนี้เคยตั้งค่า Setup ไว้ใน autoexec แล้วหรือไม่
+local isAlreadySetup = false
+pcall(function()
+    local myName = LP.Name:lower()
+    local autoexecPaths = { "autoexec/", "auto-exec/", "AutoExec/", "Autoexec/" }
+    for _, f in ipairs(autoexecPaths) do
+        if typeof(isfile) == "function" and isfile(f .. "ruajad_storage_autoload.lua") then
+            local content = readfile(f .. "ruajad_storage_autoload.lua")
+            if string.find(content:lower(), string.format('["%s"]', myName), 1, true) then
+                isAlreadySetup = true
+                break
+            end
+        end
+    end
+end)
+
+-- กรอบทึบปิดกั้นการใช้งานฟังก์ชันทั้งหมด จนกว่าจะกด Setup
+local lockOverlay = create("TextButton", {
+    Size = UDim2.new(1, -16, 0, 314),
+    Position = UDim2.new(0, 8, 0, 70),
+    BackgroundColor3 = Color3.fromRGB(10, 10, 14),
+    BackgroundTransparency = 0.35,
+    BorderSizePixel = 0,
+    Text = "",
+    AutoButtonColor = false,
+    Active = true,
+    Visible = not isAlreadySetup,
+    ZIndex = 8,
+    Parent = win,
+})
+create("UICorner", {CornerRadius = UDim.new(0, 8), Parent = lockOverlay})
+
+create("TextLabel", {
+    Size = UDim2.new(1, -20, 0, 36),
+    Position = UDim2.new(0, 10, 0.5, -18),
+    BackgroundTransparency = 1,
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    TextColor3 = Color3.fromRGB(220, 220, 230),
+    Text = "LOCKED: Click Setup below to activate",
+    ZIndex = 9,
+    Parent = lockOverlay,
+})
+
+-- ปุ่มเดียวจบ: เซ็ต AutoExecute เฉพาะชื่อไอดีสำรองจอนี้
+local autoExecBtn = create("TextButton", {
+    Size = UDim2.new(1, -24, 0, 28),
+    Position = UDim2.new(0, 12, 0, 388),
+    BackgroundColor3 = isAlreadySetup and Color3.fromRGB(18, 48, 28) or Color3.fromRGB(26, 88, 44),
+    BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold,
+    TextSize = 11,
+    TextColor3 = Color3.fromRGB(130, 255, 160),
+    Text = isAlreadySetup and "Auto-Execute Linked (Active)" or "Setup Auto-Execute (Click to Unlock)",
+    AutoButtonColor = true,
+    ZIndex = 10,
+    Parent = win,
+})
+create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = autoExecBtn})
+create("UIStroke", {Color = Color3.fromRGB(45, 120, 65), Thickness = 1, Parent = autoExecBtn})
+
+autoExecBtn.MouseButton1Click:Connect(function()
+    autoExecBtn.Text = "Setting up..."
+    task.spawn(function()
+        local myName = LP.Name
+        if typeof(isfolder) == "function" and not isfolder("RuajadHub") then
+            pcall(makefolder, "RuajadHub")
+        end
+        
+        -- ดึงรายชื่อไอดีที่เคยบันทึกไว้ใน autoexec เดิม (ถ้ามี)
+        local knownAccounts = { [myName:lower()] = true }
+        local autoexecPaths = { "autoexec/", "auto-exec/", "AutoExec/", "Autoexec/" }
+        local targetFolder = "autoexec/"
+        
+        for _, f in ipairs(autoexecPaths) do
+            if typeof(isfolder) == "function" and isfolder(f) then
+                targetFolder = f
+                local autoFilePath = f .. "ruajad_storage_autoload.lua"
+                if typeof(isfile) == "function" and isfile(autoFilePath) then
+                    local content = readfile(autoFilePath)
+                    for acc in string.gmatch(content, '%["(.-)"%]%s*=%s*true') do
+                        knownAccounts[acc:lower()] = true
+                    end
+                end
+                break
+            end
+        end
+
+        -- ประกอบโค้ดสำหรับไฟล์ใน autoexec ที่เช็คชื่อผู้เล่น
+        local accTableStr = "{\n"
+        for acc in pairs(knownAccounts) do
+            accTableStr = accTableStr .. string.format('    [%q] = true,\n', acc)
+        end
+        accTableStr = accTableStr .. "}"
+
+        local loaderScript = string.format([[-- [Ruajad Hub] Storage Trade Auto-Loader (Backup accounts only)
+repeat task.wait() until game:IsLoaded()
+local LP = game:GetService("Players").LocalPlayer
+if not LP then return end
+
+local BACKUP_ACCOUNTS = %s
+
+if BACKUP_ACCOUNTS[LP.Name:lower()] then
+    task.wait(2)
+    pcall(function()
+        if typeof(isfile) == "function" and isfile("RuajadHub/storage_trade.lua") then
+            loadstring(readfile("RuajadHub/storage_trade.lua"))()
+        elseif typeof(isfile) == "function" and isfile("storage_trade.lua") then
+            loadstring(readfile("storage_trade.lua"))()
+        end
+    end)
+end
+]], accTableStr)
+
+        if typeof(isfolder) == "function" and not isfolder(targetFolder:gsub("/$", "")) then
+            pcall(makefolder, targetFolder:gsub("/$", ""))
+        end
+
+        local savedAuto = false
+        pcall(function()
+            if typeof(writefile) == "function" then
+                writefile(targetFolder .. "ruajad_storage_autoload.lua", loaderScript)
+                savedAuto = true
+            end
+        end)
+
+        queueScriptOnTeleport()
+
+        if savedAuto then
+            isAlreadySetup = true
+            lockOverlay.Visible = false
+            autoExecBtn.Text = "Setup Complete (Active)"
+            autoExecBtn.BackgroundColor3 = Color3.fromRGB(18, 48, 28)
+            setStatus("Ready · Linked @" .. myName)
+        else
+            autoExecBtn.Text = "Failed to save autoexec"
+            setStatus("writefile error")
+            task.wait(2)
+            autoExecBtn.Text = "Setup Auto-Execute (Click to Unlock)"
+        end
+    end)
+end)
 
 local applySlotId
 applySlotId = function(newId)
@@ -1246,6 +1550,30 @@ pcall(function()
     -- end
     if CONFIG.AntiAfk then
         applyAntiAfk(true)
+    end
+end)
+
+-- ============================================================
+-- [6] AUTO HOP WATCHDOG (CROWDED SERVER)
+-- ============================================================
+local crowdedSince = 0
+
+task.spawn(function()
+    while sg and sg.Parent do
+        task.wait(5)
+        if not isHopping and not tradingWith and session.phase == "idle" then
+            local playerCount = #Players:GetPlayers()
+            local threshold = math.clamp(tonumber(CONFIG.CrowdedThreshold) or 10, 2, 12)
+            if CONFIG.AutoHopCrowded and playerCount >= threshold then
+                if crowdedSince == 0 then
+                    crowdedSince = os.clock()
+                elseif os.clock() - crowdedSince >= 4 then
+                    hopToSmallServer("Server crowded (" .. tostring(playerCount) .. "/12)")
+                end
+            else
+                crowdedSince = 0
+            end
+        end
     end
 end)
 
