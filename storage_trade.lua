@@ -230,79 +230,28 @@ do
             if terrainOn then
                 return
             end
-            freezeCharacter()
 
-            -- ซ่อน Terrain แบบไม่ลบ (ซ่อนชั่วคราว)
+            -- ซ่อน Terrain แบบง่าย: เปลี่ยน property ของ Terrain อย่างเดียว ไม่แตะ workspace objects
             pcall(function()
                 local t = workspace:FindFirstChildOfClass("Terrain") or workspace.Terrain
                 if t then
                     terrainBackup = {
-                        Decoration = t.Decoration,
-                        WaterWaveSize = t.WaterWaveSize,
-                        WaterWaveSpeed = t.WaterWaveSpeed,
+                        Decoration      = t.Decoration,
+                        WaterWaveSize   = t.WaterWaveSize,
+                        WaterWaveSpeed  = t.WaterWaveSpeed,
                         WaterReflectance = t.WaterReflectance,
                         WaterTransparency = t.WaterTransparency,
-                        Transparency = pcall(function() return t.Transparency end) and t.Transparency or nil,
                     }
-                    t.Decoration = false
-                    t.WaterWaveSize = 0
-                    t.WaterWaveSpeed = 0
+                    -- บันทึก Transparency ถ้ามี property นี้ (executor บางตัวรองรับ)
+                    local ok, val = pcall(function() return t.Transparency end)
+                    if ok then terrainBackup.Transparency = val end
+
+                    t.Decoration      = false
+                    t.WaterWaveSize   = 0
+                    t.WaterWaveSpeed  = 0
                     t.WaterReflectance = 0
                     t.WaterTransparency = 1
-                    pcall(function()
-                        t.Transparency = 1
-                    end)
-                end
-            end)
-
-            -- ซ่อน Objects / Models ของแมพใน workspace (เก็บ backup เพื่อกู้คืนเมื่อปิด)
-            hiddenObjectsBackup = {}
-            pcall(function()
-                for _, obj in ipairs(workspace:GetChildren()) do
-                    -- ไม่ซ่อน ตัวละคร, กล้อง, Terrain
-                    if obj ~= workspace.CurrentCamera
-                        and not obj:IsA("Terrain")
-                        and not Players:GetPlayerFromCharacter(obj)
-                    then
-                        -- โฟลเดอร์/โมเดลแมพ อาหาร ทรัพยากร สิ่งก่อสร้าง
-                        if obj:IsA("Folder") or obj:IsA("Model") or obj:IsA("BasePart") then
-                            -- ถ้าเป็น BasePart
-                            if obj:IsA("BasePart") then
-                                table.insert(hiddenObjectsBackup, {
-                                    inst = obj,
-                                    prop = "Transparency",
-                                    val = obj.Transparency
-                                })
-                                obj.Transparency = 1
-                            else
-                                -- สำหรับ Model / Folder ซ่อนลูกที่เป็น BasePart / Decal / Particle
-                                for _, desc in ipairs(obj:GetDescendants()) do
-                                    if desc:IsA("BasePart") then
-                                        table.insert(hiddenObjectsBackup, {
-                                            inst = desc,
-                                            prop = "Transparency",
-                                            val = desc.Transparency
-                                        })
-                                        desc.Transparency = 1
-                                    elseif desc:IsA("Decal") or desc:IsA("Texture") then
-                                        table.insert(hiddenObjectsBackup, {
-                                            inst = desc,
-                                            prop = "Transparency",
-                                            val = desc.Transparency
-                                        })
-                                        desc.Transparency = 1
-                                    elseif desc:IsA("ParticleEmitter") or desc:IsA("Beam") or desc:IsA("Trail") or desc:IsA("Fire") or desc:IsA("Smoke") or desc:IsA("Sparkles") then
-                                        table.insert(hiddenObjectsBackup, {
-                                            inst = desc,
-                                            prop = "Enabled",
-                                            val = desc.Enabled
-                                        })
-                                        desc.Enabled = false
-                                    end
-                                end
-                            end
-                        end
-                    end
+                    pcall(function() t.Transparency = 1 end)
                 end
             end)
 
@@ -312,36 +261,23 @@ do
                 return
             end
 
-            -- กู้คืน Terrain
+            -- กู้คืน Terrain property เดิม
             pcall(function()
                 local t = workspace:FindFirstChildOfClass("Terrain") or workspace.Terrain
                 if t and terrainBackup then
-                    t.Decoration = terrainBackup.Decoration ~= nil and terrainBackup.Decoration or true
-                    t.WaterWaveSize = terrainBackup.WaterWaveSize or 0.15
-                    t.WaterWaveSpeed = terrainBackup.WaterWaveSpeed or 10
+                    t.Decoration       = terrainBackup.Decoration ~= nil and terrainBackup.Decoration or true
+                    t.WaterWaveSize    = terrainBackup.WaterWaveSize or 0.15
+                    t.WaterWaveSpeed   = terrainBackup.WaterWaveSpeed or 10
                     t.WaterReflectance = terrainBackup.WaterReflectance or 0.05
                     t.WaterTransparency = terrainBackup.WaterTransparency or 0.3
-                    pcall(function()
-                        if terrainBackup.Transparency ~= nil then
-                            t.Transparency = terrainBackup.Transparency
-                        end
-                    end)
+                    if terrainBackup.Transparency ~= nil then
+                        pcall(function() t.Transparency = terrainBackup.Transparency end)
+                    end
                 end
                 terrainBackup = nil
             end)
 
-            -- คืนค่า Object / Part ทั้งหมดที่ถูกซ่อนไว้
-            pcall(function()
-                for _, item in ipairs(hiddenObjectsBackup) do
-                    if item.inst and item.inst.Parent then
-                        pcall(function()
-                            item.inst[item.prop] = item.val
-                        end)
-                    end
-                end
-                hiddenObjectsBackup = {}
-            end)
-
+            hiddenObjectsBackup = {}
             terrainOn = false
         end
     end
