@@ -223,62 +223,103 @@ do
     end)
 
     local hiddenObjectsBackup = {}
-    local terrainBackup = nil
+    local terrainWaterBackup = nil
+    local hideObjectsConn = nil
+
+    local function isPlayerDescendant(inst)
+        if not inst then return false end
+        for _, plr in ipairs(Players:GetPlayers()) do
+            local char = plr.Character
+            if char and inst:IsDescendantOf(char) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function hideInstance(inst)
+        if not inst or isPlayerDescendant(inst) then return end
+        if inst:IsA("BasePart") then
+            if hiddenObjectsBackup[inst] == nil then
+                hiddenObjectsBackup[inst] = inst.LocalTransparencyModifier
+            end
+            pcall(function() inst.LocalTransparencyModifier = 1 end)
+        elseif inst:IsA("Decal") or inst:IsA("Texture") then
+            if hiddenObjectsBackup[inst] == nil then
+                hiddenObjectsBackup[inst] = inst.Transparency
+            end
+            pcall(function() inst.Transparency = 1 end)
+        elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
+            if hiddenObjectsBackup[inst] == nil then
+                hiddenObjectsBackup[inst] = inst.Enabled
+            end
+            pcall(function() inst.Enabled = false end)
+        end
+    end
 
     applyHideTerrain = function(on)
         if on then
-            if terrainOn then
-                return
-            end
-
-            -- ซ่อน Terrain แบบง่าย: เปลี่ยน property ของ Terrain อย่างเดียว ไม่แตะ workspace objects
-            pcall(function()
-                local t = workspace:FindFirstChildOfClass("Terrain") or workspace.Terrain
-                if t then
-                    terrainBackup = {
-                        Decoration      = t.Decoration,
-                        WaterWaveSize   = t.WaterWaveSize,
-                        WaterWaveSpeed  = t.WaterWaveSpeed,
-                        WaterReflectance = t.WaterReflectance,
-                        WaterTransparency = t.WaterTransparency,
-                    }
-                    -- บันทึก Transparency ถ้ามี property นี้ (executor บางตัวรองรับ)
-                    local ok, val = pcall(function() return t.Transparency end)
-                    if ok then terrainBackup.Transparency = val end
-
-                    t.Decoration      = false
-                    t.WaterWaveSize   = 0
-                    t.WaterWaveSpeed  = 0
-                    t.WaterReflectance = 0
-                    t.WaterTransparency = 1
-                    pcall(function() t.Transparency = 1 end)
-                end
-            end)
-
+            if terrainOn then return end
             terrainOn = true
-        else
-            if not terrainOn then
-                return
-            end
 
-            -- กู้คืน Terrain property เดิม
+            -- ซ่อน Terrain / น้ำ
             pcall(function()
-                local t = workspace:FindFirstChildOfClass("Terrain") or workspace.Terrain
-                if t and terrainBackup then
-                    t.Decoration       = terrainBackup.Decoration ~= nil and terrainBackup.Decoration or true
-                    t.WaterWaveSize    = terrainBackup.WaterWaveSize or 0.15
-                    t.WaterWaveSpeed   = terrainBackup.WaterWaveSpeed or 10
-                    t.WaterReflectance = terrainBackup.WaterReflectance or 0.05
-                    t.WaterTransparency = terrainBackup.WaterTransparency or 0.3
-                    if terrainBackup.Transparency ~= nil then
-                        pcall(function() t.Transparency = terrainBackup.Transparency end)
-                    end
+                local t = workspace:FindFirstChildOfClass("Terrain")
+                if t then
+                    terrainWaterBackup = t.WaterTransparency
+                    t.WaterTransparency = 1
+                    t.Decoration = false
                 end
-                terrainBackup = nil
             end)
 
-            hiddenObjectsBackup = {}
+            -- ซ่อน BasePart, Decal, Particle ทั้งหมดใน Workspace ที่ไม่ใช่ตัวละคร
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                hideInstance(obj)
+            end
+
+            -- ติดตามวัตถุที่ถูกสร้างขึ้นใหม่ขณะเปิดฟังก์ชัน
+            if not hideObjectsConn then
+                hideObjectsConn = workspace.DescendantAdded:Connect(function(obj)
+                    if terrainOn then
+                        task.defer(function()
+                            hideInstance(obj)
+                        end)
+                    end
+                end)
+            end
+        else
+            if not terrainOn then return end
             terrainOn = false
+
+            if hideObjectsConn then
+                hideObjectsConn:Disconnect()
+                hideObjectsConn = nil
+            end
+
+            -- คืนค่า Terrain / น้ำ
+            pcall(function()
+                local t = workspace:FindFirstChildOfClass("Terrain")
+                if t then
+                    t.WaterTransparency = terrainWaterBackup or 0
+                    t.Decoration = true
+                end
+            end)
+
+            -- คืนค่าความโปร่งใสของวัตถุทั้งหมด
+            for inst, originalVal in pairs(hiddenObjectsBackup) do
+                if inst and inst.Parent then
+                    pcall(function()
+                        if inst:IsA("BasePart") then
+                            inst.LocalTransparencyModifier = originalVal
+                        elseif inst:IsA("Decal") or inst:IsA("Texture") then
+                            inst.Transparency = originalVal
+                        elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam") or inst:IsA("Fire") or inst:IsA("Smoke") or inst:IsA("Sparkles") then
+                            inst.Enabled = originalVal
+                        end
+                    end)
+                end
+            end
+            table.clear(hiddenObjectsBackup)
         end
     end
 
@@ -609,7 +650,7 @@ makeToggle(74, "Enable Auto Accept", CONFIG.Enabled, function(state)
     setStatus(state and "Accepting..." or "Paused")
 end)
 
-makeToggle(102, "Hide Terrain", CONFIG.HideTerrain, function(state)
+makeToggle(102, "Hide Map / Objects", CONFIG.HideTerrain, function(state)
     CONFIG.HideTerrain = state
     saveConfig()
     applyHideTerrain(state)
